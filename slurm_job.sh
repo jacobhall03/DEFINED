@@ -26,7 +26,7 @@
 #SBATCH --output=logs/defined_%j.out
 #SBATCH --error=logs/defined_%j.err
 #SBATCH --mail-type=END,FAIL
-#SBATCH --mail-user=YOUR_EMAIL@virginia.edu   # ← update this
+#SBATCH --mail-user=weh7xp@virginia.edu   # ← update this
 
 # ── Parse optional script-level flags ────────────────────────────────────────
 # --array      : act as job-array element (uses $SLURM_ARRAY_TASK_ID)
@@ -57,17 +57,25 @@ echo "============================================================="
 module purge
 module load cuda/12.1         # or cuda/11.8 — whichever is available
 module load cudnn/8.9
-module load anaconda3/2023.09  # or miniconda / miniforge
 
-# ── Activate conda environment ───────────────────────────────────────────────
-# First-time setup (run interactively before submitting this job):
+# ── Activate Python environment ───────────────────────────────────────────────
+# The approach below uses a self-contained venv stored in your home directory,
+# which works on any cluster regardless of which (if any) conda module is
+# available.
 #
-#   conda create -n defined python=3.10 -y
-#   conda activate defined
+# First-time setup (run these interactively on the login node, only once):
+#
+#   python3 -m venv ~/envs/defined
+#   source ~/envs/defined/bin/activate
+#   pip install --upgrade pip
 #   pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
 #   pip install transformers wandb matplotlib numpy
 #
-conda activate defined
+# If your cluster provides a conda/miniforge module you can use that instead:
+#   module load miniforge3   (or miniconda3 / python/3.10 — check: module avail)
+#   conda activate defined
+#
+source ~/envs/defined/bin/activate
 
 # ── Confirm GPU allocation ───────────────────────────────────────────────────
 echo ""
