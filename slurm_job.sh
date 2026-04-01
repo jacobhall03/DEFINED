@@ -23,7 +23,7 @@
 #SBATCH --nodelist=nekomata01
 #SBATCH --cpus-per-task=8
 #SBATCH --mem=64G
-#SBATCH --time=24:00:00
+#SBATCH --time=48:00:00
 #SBATCH --output=logs/defined_%j.out
 #SBATCH --error=logs/defined_%j.err
 #SBATCH --mail-type=END,FAIL
