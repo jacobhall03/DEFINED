@@ -30,9 +30,29 @@ source "$(conda info --base)/etc/profile.d/conda.sh"
 conda activate defined
 
 # ── Install dependencies ──────────────────────────────────────────────────────
-echo "  Installing PyTorch (CUDA 12.1)..."
-pip install --quiet torch torchvision torchaudio \
-    --index-url https://download.pytorch.org/whl/cu121
+# Detect GPU CUDA capability to decide between stable and nightly PyTorch.
+# RTX 5080 / Blackwell (sm_120) requires nightly; everything older uses stable.
+GPU_CAP=$(python - <<'PYEOF'
+try:
+    import subprocess, re
+    out = subprocess.check_output(["nvidia-smi", "--query-gpu=compute_cap",
+                                   "--format=csv,noheader"]).decode().strip()
+    major = int(out.split(".")[0])
+    print(major)
+except Exception:
+    print(0)
+PYEOF
+)
+
+if [ "$GPU_CAP" -ge 12 ]; then
+    echo "  Detected sm_${GPU_CAP}x GPU (Blackwell) — installing PyTorch nightly (CUDA 12.4)..."
+    pip install --quiet --pre torch torchvision torchaudio \
+        --index-url https://download.pytorch.org/whl/nightly/cu124
+else
+    echo "  Installing PyTorch stable (CUDA 12.1)..."
+    pip install --quiet torch torchvision torchaudio \
+        --index-url https://download.pytorch.org/whl/cu121
+fi
 
 echo "  Installing remaining dependencies..."
 pip install --quiet transformers wandb matplotlib numpy
