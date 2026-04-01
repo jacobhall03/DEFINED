@@ -20,8 +20,7 @@
 #SBATCH --job-name=DEFINED_replicate
 #SBATCH --partition=gpu
 #SBATCH --gres=gpu:1
-#SBATCH --constraint="a100_80gb"
-#SBATCH --nodelist=cheetah04
+#SBATCH --nodelist=nekomata01
 #SBATCH --cpus-per-task=8
 #SBATCH --mem=64G
 #SBATCH --time=24:00:00
@@ -61,8 +60,8 @@ module load miniforge
 # ── Activate conda environment ────────────────────────────────────────────────
 # First-time setup — run this once interactively before submitting:
 #
-#   srun --partition=gpu --gres=gpu:1 --constraint="a100_80gb" \
-#        --nodelist=cheetah04 --cpus-per-task=8 --mem=32G --time=1:00:00 --pty bash
+#   srun --partition=gpu --gres=gpu:1 --nodelist=nekomata01 \
+#        --cpus-per-task=8 --mem=32G --time=1:00:00 --pty bash
 #   module load miniforge
 #   conda create -n defined python=3.10 -y
 #   conda activate defined
