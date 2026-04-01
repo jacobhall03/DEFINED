@@ -18,8 +18,9 @@
 
 # ── Scheduler directives ──────────────────────────────────────────────────────
 #SBATCH --job-name=DEFINED_replicate
-#SBATCH --partition=gpu                  # adjust to your cluster's GPU partition
-#SBATCH --gres=gpu:a100:1
+#SBATCH --partition=gpu
+#SBATCH --gres=gpu:1
+#SBATCH --constraint="a100_40gb"
 #SBATCH --cpus-per-task=8
 #SBATCH --mem=64G
 #SBATCH --time=24:00:00
@@ -53,29 +54,22 @@ echo "  Start time  : $(date)"
 echo "============================================================="
 
 # ── Load cluster modules ─────────────────────────────────────────────────────
-# Adjust module names to match your cluster (check: module avail cuda)
 module purge
-module load cuda/12.1         # or cuda/11.8 — whichever is available
-module load cudnn/8.9
+module load miniforge
 
-# ── Activate Python environment ───────────────────────────────────────────────
-# The approach below uses a self-contained venv stored in your home directory,
-# which works on any cluster regardless of which (if any) conda module is
-# available.
+# ── Activate conda environment ────────────────────────────────────────────────
+# First-time setup — run this once interactively before submitting:
 #
-# First-time setup (run these interactively on the login node, only once):
-#
-#   python3 -m venv ~/envs/defined
-#   source ~/envs/defined/bin/activate
-#   pip install --upgrade pip
+#   srun --partition=gpu --gres=gpu:1 --constraint="a100_40gb" \
+#        --cpus-per-task=8 --mem=32G --time=1:00:00 --pty bash
+#   module load miniforge
+#   conda create -n defined python=3.10 -y
+#   conda activate defined
 #   pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
 #   pip install transformers wandb matplotlib numpy
+#   exit
 #
-# If your cluster provides a conda/miniforge module you can use that instead:
-#   module load miniforge3   (or miniconda3 / python/3.10 — check: module avail)
-#   conda activate defined
-#
-source ~/envs/defined/bin/activate
+conda activate defined
 
 # ── Confirm GPU allocation ───────────────────────────────────────────────────
 echo ""
