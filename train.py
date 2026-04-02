@@ -227,7 +227,9 @@ def trainNetwork(model_GPT2, args, task_name, device):
     # ---------------- Training config ----------------
     n_it_per_epoch = 10
     log_every = 10
-    SAVE_MODEL = True
+
+    resume_path = os.path.join("./models", f"{task_name}_resume.pth")
+    os.makedirs("./models", exist_ok=True)
 
     best_val = 1e9
     best_it = 0
@@ -382,26 +384,28 @@ def trainNetwork(model_GPT2, args, task_name, device):
             elif in_icl_phase and mean_errors < best_icl_ser:
                 best_icl_ser = mean_errors
 
-        # ---------------- Save model periodically ----------------
-        if SAVE_MODEL and epoch % 200 == 0:
-            time_id = time.strftime("%m%d%H%M%S", time.localtime())
-            save_dir = "./models"
-            os.makedirs(save_dir, exist_ok=True)
-            save_path = os.path.join(
-                save_dir, f"{task_name}_Epoch{epoch}_{time_id}.pth"
+        # ---------------- Overwrite single resume checkpoint every 200 epochs ----------------
+        if epoch % 200 == 0:
+            torch.save(
+                {
+                    "epoch": epoch,
+                    "model_state_dict": model_GPT2.state_dict(),
+                    "optimizer_state_dict": optimizer_model_GPT2.state_dict(),
+                    "args": vars(args),
+                    "best_val": best_val,
+                    "best_it": best_it,
+                    "effective_dfe_epoch": effective_dfe_epoch,
+                    "best_icl_ser": best_icl_ser,
+                    "icl_plateau_count": icl_plateau_count,
+                    "curr_seq_len": curr_seq_len,
+                    "history": history,
+                },
+                resume_path,
             )
 
-            # Recommended: save state_dict + args + epoch
-            checkpoint = {
-                "epoch": epoch,
-                "model_state_dict": model_GPT2.state_dict(),
-                "args": vars(args),        # store all hyperparameters
-            }
-
-            torch.save(checkpoint, save_path)
-            print(f"*** Saved model checkpoint (state_dict) at epoch {epoch} to {save_path}")
-
     print(f"*** Best validation SER: {best_val:.4e} at epoch {best_it}")
+    if os.path.exists(resume_path):
+        os.remove(resume_path)
     wandb.finish()
     return history
 
