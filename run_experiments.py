@@ -48,12 +48,23 @@ TRAIN_CFG = dict(
     loss_weight=0.7,   # α in Eq. (4): L = α·L_DF + (1-α)·L_ICL
 )
 
+# ── Per-config training overrides ─────────────────────────────────────────────
+# Higher-order modulations (16QAM, 64QAM) need more ICL pre-training before
+# the DFE fine-tuning phase begins. The standard DFE_epoch=2500 is sufficient
+# for BPSK/QPSK (2/4 classes) but too early for 16QAM/64QAM (16/64 classes),
+# causing the DFE loss spike to be unrecoverable within the remaining epochs.
+TRAIN_OVERRIDES = {
+    "16QAM": dict(DFE_epoch=5000, epochs=12000),
+    "64QAM": dict(DFE_epoch=6000, epochs=14000),
+}
+
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 def make_args(cfg: dict, dfe_train: bool) -> SimpleNamespace:
     """Build a complete args namespace for one training run."""
     joint = build_joint_constellation(cfg["modulation"], cfg["num_ant"])
+    train_cfg = {**TRAIN_CFG, **TRAIN_OVERRIDES.get(cfg["modulation"], {})}
     return SimpleNamespace(
         num_ant=cfg["num_ant"],
         modulation=cfg["modulation"],
@@ -63,7 +74,7 @@ def make_args(cfg: dict, dfe_train: bool) -> SimpleNamespace:
         DFE_TRAIN=dfe_train,
         modu_num=joint.shape[0],   # will be overwritten inside trainNetwork
         **TRANSFORMER_CFG,
-        **TRAIN_CFG,
+        **train_cfg,
     )
 
 
