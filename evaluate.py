@@ -153,15 +153,23 @@ def compute_baselines(cfg: dict, pilot_len: int):
 
 # ── Plotting ──────────────────────────────────────────────────────────────────
 
-# Subplot titles from the paper (gain values are from the paper, not recomputed)
-_PANEL_TITLES = [
-    "(a) SISO BPSK, SNR=5 dB, 1 Pilot\ngain$_{\\mathrm{DF}}$=11.2%",
-    "(b) SISO QPSK, SNR=10 dB, 1 Pilot\ngain$_{\\mathrm{DF}}$=11.6%",
-    "(c) SISO 16QAM, SNR=20 dB, 1 Pilot\ngain$_{\\mathrm{DF}}$=43.7%",
-    "(d) SISO 64QAM, SNR=25 dB, 1 Pilot\ngain$_{\\mathrm{DF}}$=45.6%",
-    "(e) MIMO BPSK, SNR=10 dB, 2 Pilots\ngain$_{\\mathrm{DF}}$=16.8%",
-    "(f) MIMO QPSK, SNR=15 dB, 2 Pilots\ngain$_{\\mathrm{DF}}$=38.6%",
+_PANEL_LABELS = [
+    ("a", "SISO BPSK",  5,  "1 Pilot"),
+    ("b", "SISO QPSK",  10, "1 Pilot"),
+    ("c", "SISO 16QAM", 20, "1 Pilot"),
+    ("d", "SISO 64QAM", 25, "1 Pilot"),
+    ("e", "MIMO BPSK",  10, "2 Pilots"),
+    ("f", "MIMO QPSK",  15, "2 Pilots"),
 ]
+
+
+def _gain(defined_df: np.ndarray, k: int) -> float:
+    """Compute gain_DF = (SER_k - SER_{T-1}) / SER_k × 100%."""
+    ser_start = defined_df[k]
+    ser_end   = defined_df[-1]
+    if ser_start <= 0:
+        return 0.0
+    return (ser_start - ser_end) / ser_start * 100.0
 
 
 def plot_figure4(all_results: list, save_dir: str = "./figures"):
@@ -172,7 +180,7 @@ def plot_figure4(all_results: list, save_dir: str = "./figures"):
 
     fig, axes = plt.subplots(2, 3, figsize=(15, 9))
 
-    for ax, r, title in zip(axes.flatten(), all_results, _PANEL_TITLES):
+    for ax, r, (letter, system, snr, pilots) in zip(axes.flatten(), all_results, _PANEL_LABELS):
         k    = r["pilot_len"]
         cl_k = cl[k - 1:]         # [k, k+1, ..., 30]  — context lengths for DF curves
 
@@ -196,6 +204,11 @@ def plot_figure4(all_results: list, save_dir: str = "./figures"):
         ax.plot(cl_k, r["defined_df"][k:],  color="purple", linewidth=1.5,
                 marker="D", markevery=5, markersize=4, label=f"DEFINED-DF-P{k}")
 
+        gain_pct = _gain(r["defined_df"], k)
+        title = (
+            f"({letter}) {system}, SNR={snr} dB, {pilots}\n"
+            f"gain$_{{\\mathrm{{DF}}}}$={gain_pct:.1f}%"
+        )
         ax.set_xlabel("Context Sequence Length", fontsize=9)
         ax.set_ylabel("Symbol Error Rate",       fontsize=9)
         ax.set_title(title, fontsize=9)
@@ -266,10 +279,8 @@ def main():
         print(f"  Baselines (N={N_EVAL_BASELINE:,})...")
         mmse_pk, mmse_p30, mmse_df = compute_baselines(cfg, k)
 
-        # Gain metric from paper: (SER_k - SER_{T-1}) / SER_k × 100 %
-        if defined_df[k] > 0:
-            gain = (defined_df[k] - defined_df[-1]) / defined_df[k] * 100
-            print(f"  DEFINED-DF gain (replicated): {gain:.1f}%")
+        gain_pct = _gain(defined_df, k)
+        print(f"  DEFINED-DF gain: {gain_pct:.1f}%")
 
         all_results.append(
             dict(
