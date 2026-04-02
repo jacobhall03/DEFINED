@@ -55,10 +55,20 @@ TRAIN_CFG = dict(
 # DFE_epoch is kept as a hard fallback in case no plateau is detected.
 # dfe_min_epochs prevents switching before the model has had a chance to learn.
 TRAIN_OVERRIDES = {
-    "16QAM": dict(epochs=12000, DFE_epoch=8000,
-                  adaptive_dfe=True, dfe_min_epochs=2000, dfe_patience=10),
-    "64QAM": dict(epochs=14000, DFE_epoch=10000,
-                  adaptive_dfe=True, dfe_min_epochs=3000, dfe_patience=10),
+    "16QAM": dict(
+        epochs=12000, DFE_epoch=8000,
+        adaptive_dfe=True, dfe_min_epochs=2000, dfe_patience=10,
+        # Curriculum: start at length 4, grow by 3 every 150 epochs
+        # reaches full length 31 after ~9 steps ≈ 1350 epochs
+        curriculum=True, curr_start_len=4, curr_step_size=3, curr_step_epochs=150,
+    ),
+    "64QAM": dict(
+        epochs=14000, DFE_epoch=10000,
+        adaptive_dfe=True, dfe_min_epochs=3000, dfe_patience=10,
+        # Curriculum: start at length 2, grow by 2 every 200 epochs
+        # reaches full length 31 after ~15 steps ≈ 3000 epochs (within dfe_min_epochs)
+        curriculum=True, curr_start_len=2, curr_step_size=2, curr_step_epochs=200,
+    ),
 }
 
 

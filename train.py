@@ -235,6 +235,19 @@ def trainNetwork(model_GPT2, args, task_name, device):
     dfe_min_delta  = getattr(args, 'dfe_min_delta',  5e-4)
     dfe_min_epochs = getattr(args, 'dfe_min_epochs', 1000)
 
+    # ── Curriculum learning setup ─────────────────────────────────────────────
+    # During ICL pre-training, context length grows from curr_start_len to
+    # prompt_seq_length, increasing by curr_step_size every curr_step_epochs.
+    curriculum       = getattr(args, 'curriculum',        False)
+    curr_start_len   = getattr(args, 'curr_start_len',    args.prompt_seq_length)
+    curr_step_size   = getattr(args, 'curr_step_size',    1)
+    curr_step_epochs = getattr(args, 'curr_step_epochs',  100)
+
+    curr_seq_len = curr_start_len if curriculum else args.prompt_seq_length
+    if curriculum:
+        print(f"*** Curriculum: start_len={curr_start_len}, step={curr_step_size} "
+              f"every {curr_step_epochs} epochs → full len={args.prompt_seq_length}")
+
     # effective_dfe_epoch tracks when the ICL→DFE switch actually happens.
     # In fixed mode it equals args.DFE_epoch throughout.
     # In adaptive mode it may be updated earlier when a plateau is detected;
@@ -256,6 +269,17 @@ def trainNetwork(model_GPT2, args, task_name, device):
         # Determine phase once per epoch (before any updates this epoch).
         in_icl_phase = args.DFE_TRAIN and (epoch < effective_dfe_epoch)
 
+        # ── Update curriculum sequence length ─────────────────────────────────
+        if curriculum and in_icl_phase:
+            steps_done   = epoch // curr_step_epochs
+            new_seq_len  = min(curr_start_len + steps_done * curr_step_size,
+                               args.prompt_seq_length)
+            if new_seq_len != curr_seq_len:
+                curr_seq_len = new_seq_len
+                print(f"*** Curriculum: context length → {curr_seq_len} at epoch {epoch}")
+        elif not in_icl_phase:
+            curr_seq_len = args.prompt_seq_length   # DFE phase always uses full length
+
         # One-time message when DFE phase begins.
         if args.DFE_TRAIN and not in_icl_phase and not dfe_phase_started:
             dfe_phase_started = True
@@ -267,8 +291,8 @@ def trainNetwork(model_GPT2, args, task_name, device):
             if it >= n_it_per_epoch:
                 break
 
-            ys_batch = batch["y"].to(device)  # (B, T, 2N)
-            xs_batch = batch["x"].to(device)  # (B, T, C)
+            ys_batch = batch["y"].to(device)[:, :curr_seq_len, :]  # (B, L, 2N)
+            xs_batch = batch["x"].to(device)[:, :curr_seq_len, :]  # (B, L, C)
 
             if in_icl_phase or not args.DFE_TRAIN:
                 loss, output = icl_train(
@@ -300,11 +324,13 @@ def trainNetwork(model_GPT2, args, task_name, device):
             # During ICL pre-training use icl_val — it gives a clean convergence
             # signal uncontaminated by feedback errors, which is also what the
             # plateau detector needs.  Switch to DEFINED_val once DFE starts.
+            # Truncate validation to curr_seq_len so the plateau detector measures
+            # SER at the same length the model is currently being trained on.
             if in_icl_phase or not args.DFE_TRAIN:
                 _, mean_errors = icl_val(
                     model_GPT2,
-                    ys_batch=y_val,
-                    xs_batch=x_val,
+                    ys_batch=y_val[:, :curr_seq_len, :],
+                    xs_batch=x_val[:, :curr_seq_len, :],
                     args=args,
                 )
             else:

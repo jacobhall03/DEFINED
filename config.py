@@ -83,6 +83,22 @@ def parameter_reading():
                         help='Minimum ICL epochs that must pass before plateau detection begins.')
 
     # --------------------------------------------------------------- #
+    # Curriculum learning
+    # --------------------------------------------------------------- #
+    parser.add_argument('--curriculum', action='store_true', default=False,
+                        help=(
+                            'Progressively increase context sequence length during '
+                            'ICL pre-training, starting from curr_start_len and '
+                            'growing by curr_step_size every curr_step_epochs epochs.'
+                        ))
+    parser.add_argument('--curr_start_len', type=int, default=4,
+                        help='Initial context length at the start of curriculum training.')
+    parser.add_argument('--curr_step_size', type=int, default=3,
+                        help='Number of positions added to context length per curriculum step.')
+    parser.add_argument('--curr_step_epochs', type=int, default=150,
+                        help='Number of training epochs between curriculum length increases.')
+
+    # --------------------------------------------------------------- #
     # Miscellaneous
     # --------------------------------------------------------------- #
     parser.add_argument('--model_type', default='GPT2',
