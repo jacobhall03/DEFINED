@@ -54,11 +54,10 @@ def make_eval_args(cfg: dict) -> SimpleNamespace:
         modulation=cfg["modulation"],
         SNR_dB_min=cfg["eval_snr"],
         SNR_dB_max=cfg["eval_snr"],
-        prompt_seq_length=T,
         train_pilot_len=cfg["pilot_len"],
         modu_num=joint.shape[0],
         **TRANSFORMER_CFG,
-        **TRAIN_CFG,
+        **TRAIN_CFG,   # includes prompt_seq_length=31
     )
 
 
