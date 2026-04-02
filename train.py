@@ -277,7 +277,25 @@ def trainNetwork(model_GPT2, args, task_name, device):
         "dfe_switch_epoch":   None, # epoch where DFE phase began
     }
 
-    for epoch in range(args.epochs):
+    # ── Resume from crash checkpoint if one exists ────────────────────────────
+    start_epoch = 0
+    if os.path.exists(resume_path):
+        print(f"*** Resuming from crash checkpoint: {resume_path}")
+        ckpt = torch.load(resume_path, map_location=device)
+        model_GPT2.load_state_dict(ckpt["model_state_dict"])
+        optimizer_model_GPT2.load_state_dict(ckpt["optimizer_state_dict"])
+        start_epoch         = ckpt["epoch"] + 1
+        best_val            = ckpt["best_val"]
+        best_it             = ckpt["best_it"]
+        effective_dfe_epoch = ckpt["effective_dfe_epoch"]
+        best_icl_ser        = ckpt["best_icl_ser"]
+        icl_plateau_count   = ckpt["icl_plateau_count"]
+        curr_seq_len        = ckpt["curr_seq_len"]
+        history             = ckpt["history"]
+        dfe_phase_started   = ckpt["dfe_phase_started"]
+        print(f"*** Resumed at epoch {start_epoch} / {args.epochs}")
+
+    for epoch in range(start_epoch, args.epochs):
         running_loss = 0.0
 
         # Determine phase once per epoch (before any updates this epoch).
@@ -398,6 +416,7 @@ def trainNetwork(model_GPT2, args, task_name, device):
                     "best_icl_ser": best_icl_ser,
                     "icl_plateau_count": icl_plateau_count,
                     "curr_seq_len": curr_seq_len,
+                    "dfe_phase_started": dfe_phase_started,
                     "history": history,
                 },
                 resume_path,
