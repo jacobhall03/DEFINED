@@ -20,7 +20,7 @@
 #SBATCH --job-name=DEFINED_replicate
 #SBATCH --partition=gpu
 #SBATCH --gres=gpu:1
-#SBATCH --nodelist=nekomata01
+#SBATCH --nodelist=jaguar05
 #SBATCH --cpus-per-task=8
 #SBATCH --mem=64G
 #SBATCH --time=48:00:00
