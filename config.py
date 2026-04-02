@@ -63,6 +63,26 @@ def parameter_reading():
                         help='Weight for DEFINED loss: loss = w*loss1 + (1-w)*loss2.')
 
     # --------------------------------------------------------------- #
+    # Adaptive DFE switching
+    # --------------------------------------------------------------- #
+    parser.add_argument('--adaptive_dfe', action='store_true', default=False,
+                        help=(
+                            'Detect ICL plateau automatically and switch to DFE '
+                            'fine-tuning instead of switching at a fixed DFE_epoch. '
+                            'DFE_epoch still acts as a hard fallback upper bound.'
+                        ))
+    parser.add_argument('--dfe_patience', type=int, default=10,
+                        help=(
+                            'Number of consecutive validation checks (each log_every=10 '
+                            'epochs) with less than dfe_min_delta relative improvement '
+                            'before the switch to DFE is triggered. Default: 10 (=100 epochs).'
+                        ))
+    parser.add_argument('--dfe_min_delta', type=float, default=5e-4,
+                        help='Minimum relative SER improvement to reset the plateau counter.')
+    parser.add_argument('--dfe_min_epochs', type=int, default=1000,
+                        help='Minimum ICL epochs that must pass before plateau detection begins.')
+
+    # --------------------------------------------------------------- #
     # Miscellaneous
     # --------------------------------------------------------------- #
     parser.add_argument('--model_type', default='GPT2',

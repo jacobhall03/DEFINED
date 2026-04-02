@@ -228,8 +228,39 @@ def trainNetwork(model_GPT2, args, task_name, device):
     best_val = 1e9
     best_it = 0
 
+    # ── Adaptive DFE switching setup ──────────────────────────────────────────
+    # Read adaptive args with defaults so old args objects stay compatible.
+    adaptive_dfe   = getattr(args, 'adaptive_dfe',   False)
+    dfe_patience   = getattr(args, 'dfe_patience',   10)
+    dfe_min_delta  = getattr(args, 'dfe_min_delta',  5e-4)
+    dfe_min_epochs = getattr(args, 'dfe_min_epochs', 1000)
+
+    # effective_dfe_epoch tracks when the ICL→DFE switch actually happens.
+    # In fixed mode it equals args.DFE_epoch throughout.
+    # In adaptive mode it may be updated earlier when a plateau is detected;
+    # args.DFE_epoch remains a hard fallback upper bound.
+    effective_dfe_epoch = args.DFE_epoch
+    best_icl_ser        = float('inf')   # tracks ICL-phase val SER for plateau detection
+    icl_plateau_count   = 0
+    dfe_phase_started   = False          # used to print the phase-switch message once
+
+    if args.DFE_TRAIN:
+        mode = "adaptive" if adaptive_dfe else "fixed"
+        print(f"*** Start DFE Train ({mode} switch): {task_name}")
+    else:
+        print(f"*** Start ICL Train: {task_name}")
+
     for epoch in range(args.epochs):
         running_loss = 0.0
+
+        # Determine phase once per epoch (before any updates this epoch).
+        in_icl_phase = args.DFE_TRAIN and (epoch < effective_dfe_epoch)
+
+        # One-time message when DFE phase begins.
+        if args.DFE_TRAIN and not in_icl_phase and not dfe_phase_started:
+            dfe_phase_started = True
+            print(f"*** DFE fine-tuning phase started at epoch {epoch} "
+                  f"({'adaptive plateau' if adaptive_dfe else 'fixed schedule'})")
 
         # One epoch: take n_it_per_epoch mini-batches
         for it, batch in enumerate(train_loader):
@@ -239,36 +270,7 @@ def trainNetwork(model_GPT2, args, task_name, device):
             ys_batch = batch["y"].to(device)  # (B, T, 2N)
             xs_batch = batch["x"].to(device)  # (B, T, C)
 
-            # 1) ICL phase, 2) DEFINED phase
-            if args.DFE_TRAIN:
-                if epoch == 0 and it == 0:
-                    print("*** Start DFE Train:", task_name)
-
-                if epoch < args.DFE_epoch:
-                    # ICL training phase
-                    loss, output = icl_train(
-                        model_GPT2,
-                        ys_batch=ys_batch,
-                        xs_batch=xs_batch,
-                        optimizer=optimizer_model_GPT2,
-                        loss_func=loss_function_model_GPT2,
-                        args=args,
-                    )
-                else:
-                    # Decision-feedback training phase
-                    loss, output = DEFINED_train(
-                        args,
-                        model_GPT2,
-                        ys_batch=ys_batch,
-                        xs_batch=xs_batch,
-                        optimizer=optimizer_model_GPT2,
-                        loss_func=loss_function_model_GPT2,
-                        train_pilot_len=args.train_pilot_len
-                    )
-            else:
-                if epoch == 0 and it == 0:
-                    print("*** Start ICL Train:", task_name)
-
+            if in_icl_phase or not args.DFE_TRAIN:
                 loss, output = icl_train(
                     model_GPT2,
                     ys_batch=ys_batch,
@@ -276,6 +278,16 @@ def trainNetwork(model_GPT2, args, task_name, device):
                     optimizer=optimizer_model_GPT2,
                     loss_func=loss_function_model_GPT2,
                     args=args,
+                )
+            else:
+                loss, output = DEFINED_train(
+                    args,
+                    model_GPT2,
+                    ys_batch=ys_batch,
+                    xs_batch=xs_batch,
+                    optimizer=optimizer_model_GPT2,
+                    loss_func=loss_function_model_GPT2,
+                    train_pilot_len=args.train_pilot_len,
                 )
 
             running_loss += loss / n_it_per_epoch
@@ -285,32 +297,48 @@ def trainNetwork(model_GPT2, args, task_name, device):
 
         # ---------------- Validation ----------------
         if epoch % log_every == 0:
-            if args.DFE_TRAIN:
-                length_errors_list, mean_errors = DEFINED_val(
+            # During ICL pre-training use icl_val — it gives a clean convergence
+            # signal uncontaminated by feedback errors, which is also what the
+            # plateau detector needs.  Switch to DEFINED_val once DFE starts.
+            if in_icl_phase or not args.DFE_TRAIN:
+                _, mean_errors = icl_val(
+                    model_GPT2,
+                    ys_batch=y_val,
+                    xs_batch=x_val,
+                    args=args,
+                )
+            else:
+                _, mean_errors = DEFINED_val(
                     model_GPT2,
                     ys_batch=y_val,
                     xs_batch=x_val,
                     args=args,
                     train_pilot_len=args.train_pilot_len,
                 )
-            else:
-                length_errors_list, mean_errors = icl_val(
-                    model_GPT2,
-                    ys_batch=y_val,
-                    xs_batch=x_val,
-                    args=args,
-                )
 
-            wandb.log(
-                {
-                    "Test: Symbol Error Rate": mean_errors,
-                    "epoch": epoch,
-                }
-            )
+            wandb.log({"Test: Symbol Error Rate": mean_errors, "epoch": epoch})
 
             if mean_errors < best_val:
                 best_val = mean_errors
                 best_it = epoch
+
+            # ── Adaptive plateau detection (ICL phase only) ───────────────
+            if adaptive_dfe and args.DFE_TRAIN and in_icl_phase and epoch >= dfe_min_epochs:
+                rel_improvement = (best_icl_ser - mean_errors) / max(best_icl_ser, 1e-10)
+                if rel_improvement > dfe_min_delta:
+                    best_icl_ser      = mean_errors
+                    icl_plateau_count = 0
+                else:
+                    icl_plateau_count += 1
+
+                if icl_plateau_count >= dfe_patience:
+                    effective_dfe_epoch = epoch + 1   # switch next epoch
+                    icl_plateau_count   = 0
+                    print(f"*** Adaptive DFE: plateau detected at epoch {epoch} "
+                          f"(val SER={mean_errors:.4e}), switching to DFE at epoch "
+                          f"{effective_dfe_epoch}")
+            elif in_icl_phase and mean_errors < best_icl_ser:
+                best_icl_ser = mean_errors
 
         # ---------------- Save model periodically ----------------
         if SAVE_MODEL and epoch % 200 == 0:

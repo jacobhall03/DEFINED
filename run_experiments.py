@@ -50,12 +50,15 @@ TRAIN_CFG = dict(
 
 # ── Per-config training overrides ─────────────────────────────────────────────
 # Higher-order modulations (16QAM, 64QAM) need more ICL pre-training before
-# the DFE fine-tuning phase begins. The standard DFE_epoch=2500 is sufficient
-# for BPSK/QPSK (2/4 classes) but too early for 16QAM/64QAM (16/64 classes),
-# causing the DFE loss spike to be unrecoverable within the remaining epochs.
+# the DFE fine-tuning phase begins.  We enable adaptive switching so the
+# transition happens automatically when the ICL validation SER plateaus.
+# DFE_epoch is kept as a hard fallback in case no plateau is detected.
+# dfe_min_epochs prevents switching before the model has had a chance to learn.
 TRAIN_OVERRIDES = {
-    "16QAM": dict(DFE_epoch=5000, epochs=12000),
-    "64QAM": dict(DFE_epoch=6000, epochs=14000),
+    "16QAM": dict(epochs=12000, DFE_epoch=8000,
+                  adaptive_dfe=True, dfe_min_epochs=2000, dfe_patience=10),
+    "64QAM": dict(epochs=14000, DFE_epoch=10000,
+                  adaptive_dfe=True, dfe_min_epochs=3000, dfe_patience=10),
 }
 
 
