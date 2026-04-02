@@ -20,8 +20,8 @@ from types import SimpleNamespace
 # Disable WandB before any train/wandb imports (can override with --use_wandb)
 os.environ.setdefault("WANDB_MODE", "disabled")
 
-from data import build_joint_constellation                     # noqa: E402
-from train import build_model, trainNetwork                    # noqa: E402
+from data import build_joint_constellation                              # noqa: E402
+from train import build_model, trainNetwork, plot_training_history     # noqa: E402
 
 
 # ── Experiment configurations matching Figure 4 panels ────────────────────────
@@ -144,7 +144,10 @@ def train_one(cfg: dict, dfe_train: bool, device: torch.device):
     n_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
     print(f"  Parameters: {n_params:,}")
 
-    trainNetwork(model, args, task_name=name, device=device)
+    history = trainNetwork(model, args, task_name=name, device=device)
+
+    # Save training history plot
+    plot_training_history(history, task_name=name)
 
     # Save the model state at the end of training.
     # trainNetwork also saves periodic checkpoints every 200 epochs to ./models/;

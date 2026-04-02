@@ -6,6 +6,10 @@ import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import DataLoader
 
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+import numpy as np
 import wandb
 
 from model import TransformerModel
@@ -263,6 +267,14 @@ def trainNetwork(model_GPT2, args, task_name, device):
     else:
         print(f"*** Start ICL Train: {task_name}")
 
+    # ── Training history (for post-run plots) ─────────────────────────────────
+    history = {
+        "train_loss":         [],   # (epoch, loss)
+        "val_ser":            [],   # (epoch, ser)
+        "curriculum_changes": [],   # (epoch, new_len)  — curriculum length step-ups
+        "dfe_switch_epoch":   None, # epoch where DFE phase began
+    }
+
     for epoch in range(args.epochs):
         running_loss = 0.0
 
@@ -276,6 +288,7 @@ def trainNetwork(model_GPT2, args, task_name, device):
                                args.prompt_seq_length)
             if new_seq_len != curr_seq_len:
                 curr_seq_len = new_seq_len
+                history["curriculum_changes"].append((epoch, curr_seq_len))
                 print(f"*** Curriculum: context length → {curr_seq_len} at epoch {epoch}")
         elif not in_icl_phase:
             curr_seq_len = args.prompt_seq_length   # DFE phase always uses full length
@@ -283,6 +296,7 @@ def trainNetwork(model_GPT2, args, task_name, device):
         # One-time message when DFE phase begins.
         if args.DFE_TRAIN and not in_icl_phase and not dfe_phase_started:
             dfe_phase_started = True
+            history["dfe_switch_epoch"] = epoch
             print(f"*** DFE fine-tuning phase started at epoch {epoch} "
                   f"({'adaptive plateau' if adaptive_dfe else 'fixed schedule'})")
 
@@ -316,6 +330,7 @@ def trainNetwork(model_GPT2, args, task_name, device):
 
             running_loss += loss / n_it_per_epoch
 
+        history["train_loss"].append((epoch, running_loss))
         # Log training loss
         wandb.log({"Train: Cross-Entropy Loss": running_loss, "epoch": epoch})
 
@@ -342,6 +357,7 @@ def trainNetwork(model_GPT2, args, task_name, device):
                     train_pilot_len=args.train_pilot_len,
                 )
 
+            history["val_ser"].append((epoch, mean_errors))
             wandb.log({"Test: Symbol Error Rate": mean_errors, "epoch": epoch})
 
             if mean_errors < best_val:
@@ -387,7 +403,89 @@ def trainNetwork(model_GPT2, args, task_name, device):
 
     print(f"*** Best validation SER: {best_val:.4e} at epoch {best_it}")
     wandb.finish()
-    return
+    return history
+
+
+# -------------------------------------------------------------------------- #
+# Training history plot
+# -------------------------------------------------------------------------- #
+
+def plot_training_history(history: dict, task_name: str, save_dir: str = "./figures"):
+    """
+    Save a two-panel figure showing cross-entropy loss and validation SER vs epoch.
+
+    Vertical lines mark:
+      - Each curriculum context-length increase (dashed blue, labelled with new length)
+      - The ICL → DFE phase switch (solid red, labelled)
+    """
+    os.makedirs(save_dir, exist_ok=True)
+
+    loss_epochs, loss_vals = zip(*history["train_loss"]) if history["train_loss"] else ([], [])
+    ser_epochs,  ser_vals  = zip(*history["val_ser"])    if history["val_ser"]     else ([], [])
+
+    loss_epochs = np.array(loss_epochs)
+    loss_vals   = np.array(loss_vals)
+    ser_epochs  = np.array(ser_epochs)
+    ser_vals    = np.array(ser_vals)
+
+    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 7), sharex=True)
+
+    # ── Panel 1: cross-entropy loss ──────────────────────────────────────────
+    ax1.plot(loss_epochs, loss_vals, color="steelblue", linewidth=0.8, label="Train CE Loss")
+    ax1.set_ylabel("Cross-Entropy Loss")
+    ax1.grid(True, alpha=0.3)
+    ax1.legend(loc="upper right", fontsize=8)
+
+    # ── Panel 2: validation SER ──────────────────────────────────────────────
+    ax2.semilogy(ser_epochs, ser_vals, color="darkorange", linewidth=0.8, label="Val SER")
+    ax2.set_ylabel("Symbol Error Rate (log scale)")
+    ax2.set_xlabel("Epoch")
+    ax2.grid(True, alpha=0.3, which="both")
+    ax2.legend(loc="upper right", fontsize=8)
+
+    # ── Vertical lines ───────────────────────────────────────────────────────
+    # Collect all x positions so we can stagger label heights to avoid overlap
+    all_vlines = []
+
+    for ep, new_len in history["curriculum_changes"]:
+        all_vlines.append(("curriculum", ep, new_len))
+
+    dfe_ep = history.get("dfe_switch_epoch")
+    if dfe_ep is not None:
+        all_vlines.append(("dfe", dfe_ep, None))
+
+    # Draw lines on both axes; stagger label y-positions on ax1
+    label_y_positions = np.linspace(0.92, 0.60, max(len(all_vlines), 1))
+
+    for idx, (kind, ep, val) in enumerate(all_vlines):
+        if kind == "curriculum":
+            color, ls = "royalblue", "--"
+            label     = f"len→{val}"
+        else:
+            color, ls = "crimson", "-"
+            label     = "ICL→DFE"
+
+        for ax in (ax1, ax2):
+            ax.axvline(ep, color=color, linestyle=ls, linewidth=0.9, alpha=0.7)
+
+        # Label only on ax1
+        ax1.text(
+            ep, label_y_positions[idx], label,
+            transform=ax1.get_xaxis_transform(),
+            color=color, fontsize=7, rotation=90,
+            va="top", ha="right",
+        )
+
+    fig.suptitle(task_name, fontsize=9, fontweight="bold")
+    plt.tight_layout()
+
+    safe_name = task_name.replace("/", "_").replace(" ", "_")
+    for ext in ("pdf", "png"):
+        path = os.path.join(save_dir, f"training_{safe_name}.{ext}")
+        fig.savefig(path, dpi=150, bbox_inches="tight")
+        print(f"  Saved training plot: {path}")
+
+    plt.close(fig)
 
 
 # -------------------------------------------------------------------------- #
