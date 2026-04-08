@@ -61,19 +61,32 @@ echo "============================================================="
 module purge
 module load miniforge
 
-# ── Activate conda environment ────────────────────────────────────────────────
-# First-time setup — run this once interactively before submitting:
-#
-#   srun --partition=gpu --gres=gpu:1 --nodelist=cheetah01,cheetah04,serval03,serval[06-09] \
-#        --cpus-per-task=8 --mem=32G --time=1:00:00 --pty bash
-#   module load miniforge
-#   conda create -n defined python=3.10 -y
-#   conda activate defined
-#   pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
-#   pip install transformers wandb matplotlib numpy
-#   exit
-#
-conda activate defined
+# ── Create conda environment on first run, activate on subsequent runs ────────
+# The environment lives in your home directory on the shared filesystem,
+# so it is visible from every node — no interactive setup required.
+if ! conda env list | grep -q "^defined "; then
+    echo "===== Creating conda environment (first run only) ==========="
+    conda create -n defined python=3.10 -y
+
+    conda activate defined
+
+    # Detect CUDA version from the driver and pick the matching PyTorch wheel.
+    CUDA_VER=$(nvidia-smi --query-gpu=driver_version --format=csv,noheader \
+               | head -1 | cut -d. -f1)
+    if   [ "$CUDA_VER" -ge 126 ] 2>/dev/null; then TORCH_CUDA="cu126"
+    elif [ "$CUDA_VER" -ge 124 ] 2>/dev/null; then TORCH_CUDA="cu124"
+    elif [ "$CUDA_VER" -ge 121 ] 2>/dev/null; then TORCH_CUDA="cu121"
+    else                                            TORCH_CUDA="cu118"
+    fi
+    echo "  Driver major version: $CUDA_VER → installing PyTorch with $TORCH_CUDA"
+
+    pip install torch torchvision torchaudio \
+        --index-url "https://download.pytorch.org/whl/${TORCH_CUDA}"
+    pip install transformers wandb matplotlib numpy
+    echo "============================================================="
+else
+    conda activate defined
+fi
 
 # ── Confirm GPU allocation ───────────────────────────────────────────────────
 echo ""
