@@ -181,7 +181,7 @@ def task_name(cfg: dict, dfe_train: bool) -> str:
     return (
         f"{prefix}_ant{cfg['num_ant']}_{cfg['modulation']}"
         f"_SNR[{cfg['snr_min']},{cfg['snr_max']}]"
-        f"_Seq{TRAIN_CFG['prompt_seq_length']}"
+        f"_Seq{SHARED_CFG['prompt_seq_length']}"
         f"_Layer{TRANSFORMER_CFG['num_layer']}"
         f"Emb{TRANSFORMER_CFG['embedding_dim']}"
         f"Head{TRANSFORMER_CFG['num_head']}"
