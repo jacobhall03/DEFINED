@@ -17,6 +17,7 @@ Dependencies: run_experiments.py must have been run first.
 
 import os
 import copy
+import argparse
 
 import numpy as np
 import torch
@@ -29,7 +30,7 @@ from types import SimpleNamespace
 from run_experiments import (
     EXP_CONFIGS,
     TRANSFORMER_CFG,
-    TRAIN_CFG,
+    SHARED_CFG,
     checkpoint_path,
 )
 from data import build_joint_constellation, MIMOSequenceDataset
@@ -57,7 +58,7 @@ def make_eval_args(cfg: dict) -> SimpleNamespace:
         train_pilot_len=cfg["pilot_len"],
         modu_num=joint.shape[0],
         **TRANSFORMER_CFG,
-        **TRAIN_CFG,   # includes prompt_seq_length=31
+        **SHARED_CFG,   # includes prompt_seq_length=31
     )
 
 
@@ -233,6 +234,19 @@ def plot_figure4(all_results: list, save_dir: str = "./figures"):
 # ── Main ──────────────────────────────────────────────────────────────────────
 
 def main():
+    parser = argparse.ArgumentParser(description="Evaluate DEFINED models.")
+    parser.add_argument(
+        "--config_idx", type=int, default=-1,
+        help="Which experiment config to evaluate (0-5). Default -1 evaluates all.",
+    )
+    cli = parser.parse_args()
+
+    configs = (
+        [(cli.config_idx, EXP_CONFIGS[cli.config_idx])]
+        if 0 <= cli.config_idx < len(EXP_CONFIGS)
+        else list(enumerate(EXP_CONFIGS))
+    )
+
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Device: {device}")
     if device.type == "cuda":
@@ -240,7 +254,7 @@ def main():
 
     all_results = []
 
-    for idx, cfg in enumerate(EXP_CONFIGS):
+    for idx, cfg in configs:
         k     = cfg["pilot_len"]
         label = (
             f"({['a','b','c','d','e','f'][idx]}) "

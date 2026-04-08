@@ -30,14 +30,18 @@
 #SBATCH --mail-user=weh7xp@virginia.edu   # ← update this
 
 # ── Parse optional script-level flags ────────────────────────────────────────
-# --array      : act as job-array element (uses $SLURM_ARRAY_TASK_ID)
-# --eval-only  : skip training, run evaluate.py only
+# --array            : act as job-array element (uses $SLURM_ARRAY_TASK_ID)
+# --eval-only        : skip training, run evaluate.py only
+# --config_idx N     : train and/or evaluate only config index N (0-5)
 RUN_ARRAY=false
 EVAL_ONLY=false
-for arg in "$@"; do
-    case $arg in
-        --array)     RUN_ARRAY=true ;;
-        --eval-only) EVAL_ONLY=true ;;
+CONFIG_IDX=-1
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        --array)       RUN_ARRAY=true;  shift ;;
+        --eval-only)   EVAL_ONLY=true;  shift ;;
+        --config_idx)  CONFIG_IDX="$2"; shift 2 ;;
+        *)             shift ;;
     esac
 done
 
@@ -98,6 +102,10 @@ if [ "$EVAL_ONLY" = false ]; then
         #   sbatch --array=0-5 slurm_job.sh --array
         echo "  Array element $SLURM_ARRAY_TASK_ID / config index $SLURM_ARRAY_TASK_ID"
         python run_experiments.py --config_idx "$SLURM_ARRAY_TASK_ID"
+    elif [ "$CONFIG_IDX" -ge 0 ] 2>/dev/null; then
+        # ── Single-config mode: train one specific config ─────────────────────
+        echo "  Training config index $CONFIG_IDX only"
+        python run_experiments.py --config_idx "$CONFIG_IDX"
     else
         # ── Single-job mode: all 6 configs sequentially ───────────────────────
         python run_experiments.py
@@ -113,7 +121,11 @@ fi
 if [ "$EVAL_ONLY" = true ] || [ "$RUN_ARRAY" = false ]; then
     echo ""
     echo "===== Evaluation started : $(date) ========================"
-    python evaluate.py
+    if [ "$CONFIG_IDX" -ge 0 ] 2>/dev/null; then
+        python evaluate.py --config_idx "$CONFIG_IDX"
+    else
+        python evaluate.py
+    fi
     echo ""
     echo "===== Evaluation complete : $(date) ======================="
     echo ""

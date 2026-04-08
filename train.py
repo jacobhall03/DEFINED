@@ -241,6 +241,15 @@ def trainNetwork(model_GPT2, args, task_name, device):
     dfe_min_delta  = getattr(args, 'dfe_min_delta',  5e-4)
     dfe_min_epochs = getattr(args, 'dfe_min_epochs', 1000)
 
+    # ── DFE-phase early stopping setup ───────────────────────────────────────
+    # Mirrors the ICL plateau detector but fires during DFE fine-tuning.
+    # Uses validation SER (not loss) so it is immune to the lull period and
+    # consistent with the adaptive switching logic above.
+    early_stop_patience  = getattr(args, 'early_stop_patience',  15)
+    early_stop_min_delta = getattr(args, 'early_stop_min_delta', 1e-4)
+    dfe_plateau_count    = 0
+    best_dfe_ser         = float('inf')
+
     # ── Curriculum learning setup ─────────────────────────────────────────────
     # During ICL pre-training, context length grows from curr_start_len to
     # prompt_seq_length, increasing by curr_step_size every curr_step_epochs.
@@ -275,6 +284,7 @@ def trainNetwork(model_GPT2, args, task_name, device):
         "val_ser":            [],   # (epoch, ser)
         "curriculum_changes": [],   # (epoch, new_len)  — curriculum length step-ups
         "dfe_switch_epoch":   None, # epoch where DFE phase began
+        "early_stop_epoch":   None, # epoch where DFE early stopping fired (None = ran to completion)
     }
 
     # ── Resume from crash checkpoint if one exists ────────────────────────────
@@ -284,15 +294,17 @@ def trainNetwork(model_GPT2, args, task_name, device):
         ckpt = torch.load(resume_path, map_location=device)
         model_GPT2.load_state_dict(ckpt["model_state_dict"])
         optimizer_model_GPT2.load_state_dict(ckpt["optimizer_state_dict"])
-        start_epoch         = ckpt["epoch"] + 1
-        best_val            = ckpt["best_val"]
-        best_it             = ckpt["best_it"]
-        effective_dfe_epoch = ckpt["effective_dfe_epoch"]
-        best_icl_ser        = ckpt["best_icl_ser"]
-        icl_plateau_count   = ckpt["icl_plateau_count"]
-        curr_seq_len        = ckpt["curr_seq_len"]
-        history             = ckpt["history"]
-        dfe_phase_started   = ckpt["dfe_phase_started"]
+        start_epoch          = ckpt["epoch"] + 1
+        best_val             = ckpt["best_val"]
+        best_it              = ckpt["best_it"]
+        effective_dfe_epoch  = ckpt["effective_dfe_epoch"]
+        best_icl_ser         = ckpt["best_icl_ser"]
+        icl_plateau_count    = ckpt["icl_plateau_count"]
+        curr_seq_len         = ckpt["curr_seq_len"]
+        history              = ckpt["history"]
+        dfe_phase_started    = ckpt["dfe_phase_started"]
+        dfe_plateau_count    = ckpt.get("dfe_plateau_count", 0)
+        best_dfe_ser         = ckpt.get("best_dfe_ser", float('inf'))
         print(f"*** Resumed at epoch {start_epoch} / {args.epochs}")
 
     for epoch in range(start_epoch, args.epochs):
@@ -402,6 +414,22 @@ def trainNetwork(model_GPT2, args, task_name, device):
             elif in_icl_phase and mean_errors < best_icl_ser:
                 best_icl_ser = mean_errors
 
+            # ── DFE-phase early stopping ──────────────────────────────────
+            if args.DFE_TRAIN and not in_icl_phase:
+                rel_improvement = (best_dfe_ser - mean_errors) / max(best_dfe_ser, 1e-10)
+                if rel_improvement > early_stop_min_delta:
+                    best_dfe_ser      = mean_errors
+                    dfe_plateau_count = 0
+                else:
+                    dfe_plateau_count += 1
+
+                if dfe_plateau_count >= early_stop_patience:
+                    history["early_stop_epoch"] = epoch
+                    print(f"*** Early stop: DFE plateau at epoch {epoch} "
+                          f"(val SER={mean_errors:.4e}, no improvement for "
+                          f"{early_stop_patience} checks), stopping training.")
+                    break
+
         # ---------------- Overwrite single resume checkpoint every 200 epochs ----------------
         if epoch % 200 == 0:
             torch.save(
@@ -417,6 +445,8 @@ def trainNetwork(model_GPT2, args, task_name, device):
                     "icl_plateau_count": icl_plateau_count,
                     "curr_seq_len": curr_seq_len,
                     "dfe_phase_started": dfe_phase_started,
+                    "dfe_plateau_count": dfe_plateau_count,
+                    "best_dfe_ser": best_dfe_ser,
                     "history": history,
                 },
                 resume_path,
@@ -477,6 +507,10 @@ def plot_training_history(history: dict, task_name: str, save_dir: str = "./figu
     if dfe_ep is not None:
         all_vlines.append(("dfe", dfe_ep, None))
 
+    es_ep = history.get("early_stop_epoch")
+    if es_ep is not None:
+        all_vlines.append(("early_stop", es_ep, None))
+
     # Draw lines on both axes; stagger label y-positions on ax1
     label_y_positions = np.linspace(0.92, 0.60, max(len(all_vlines), 1))
 
@@ -484,9 +518,12 @@ def plot_training_history(history: dict, task_name: str, save_dir: str = "./figu
         if kind == "curriculum":
             color, ls = "royalblue", "--"
             label     = f"len→{val}"
-        else:
+        elif kind == "dfe":
             color, ls = "crimson", "-"
             label     = "ICL→DFE"
+        else:  # early_stop
+            color, ls = "darkorange", "-"
+            label     = "early stop"
 
         for ax in (ax1, ax2):
             ax.axvline(ep, color=color, linestyle=ls, linewidth=0.9, alpha=0.7)

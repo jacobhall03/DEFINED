@@ -39,35 +39,111 @@ EXP_CONFIGS = [
 # ── Shared hyperparameters (Section IV-A of the paper) ────────────────────────
 TRANSFORMER_CFG = dict(num_layer=8, num_head=8, embedding_dim=64)
 
-TRAIN_CFG = dict(
+# Settings that are the same for every modulation.
+SHARED_CFG = dict(
     prompt_seq_length=31,
     batch_size=512,
-    epochs=8000,
     learning_rate=1e-4,
-    DFE_epoch=2500,    # epoch at which training switches from ICL to DEFINED
     loss_weight=0.7,   # α in Eq. (4): L = α·L_DF + (1-α)·L_ICL
 )
 
-# ── Per-config training overrides ─────────────────────────────────────────────
-# Higher-order modulations (16QAM, 64QAM) need more ICL pre-training before
-# the DFE fine-tuning phase begins.  We enable adaptive switching so the
-# transition happens automatically when the ICL validation SER plateaus.
-# DFE_epoch is kept as a hard fallback in case no plateau is detected.
-# dfe_min_epochs prevents switching before the model has had a chance to learn.
-TRAIN_OVERRIDES = {
+# ── Per-constellation training configuration ──────────────────────────────────
+# All per-modulation settings are explicit here so they are easy to compare
+# and adjust without hunting through multiple dicts.
+#
+# epochs          : total training epochs
+# DFE_epoch       : hard upper bound — switch to DFE at this epoch at the latest
+#                   (also the fixed switch point when adaptive_dfe=False)
+# adaptive_dfe    : detect ICL plateau automatically and switch early;
+#                   DFE_epoch still acts as a fallback
+# dfe_min_epochs  : minimum ICL epochs before plateau detection begins
+# dfe_patience    : consecutive validation checks (each 10 epochs) below
+#                   dfe_min_delta improvement before triggering DFE switch
+# dfe_min_delta        : minimum relative SER improvement to reset the ICL plateau counter
+#
+# early_stop_patience  : consecutive DFE-phase validation checks below
+#                        early_stop_min_delta improvement before stopping training
+# early_stop_min_delta : minimum relative SER improvement to reset the DFE plateau counter
+#
+# curriculum      : progressively increase context length during ICL pre-training
+# curr_start_len  : initial context length
+# curr_step_size  : positions added to context length per step
+# curr_step_epochs: epochs between each context length increase
+#
+# Context length growth: starts at curr_start_len, reaches prompt_seq_length (31)
+# after ceil((31 - curr_start_len) / curr_step_size) steps.
+CONSTELLATION_CFG = {
+    "BPSK": dict(
+        # Training schedule
+        epochs=8000,
+        DFE_epoch=2500,
+        # Adaptive DFE switching
+        adaptive_dfe=True,
+        dfe_min_epochs=1000,
+        dfe_patience=10,
+        dfe_min_delta=5e-4,
+        # DFE-phase early stopping
+        early_stop_patience=15,
+        early_stop_min_delta=1e-4,
+        # Curriculum: start=4, +4 every 100 epochs → full length ~8 steps ≈ 700 epochs
+        curriculum=True,
+        curr_start_len=4,
+        curr_step_size=4,
+        curr_step_epochs=100,
+    ),
+    "QPSK": dict(
+        # Training schedule
+        epochs=8000,
+        DFE_epoch=2500,
+        # Adaptive DFE switching
+        adaptive_dfe=True,
+        dfe_min_epochs=1000,
+        dfe_patience=10,
+        dfe_min_delta=5e-4,
+        # DFE-phase early stopping
+        early_stop_patience=15,
+        early_stop_min_delta=1e-4,
+        # Curriculum: start=4, +3 every 100 epochs → full length ~9 steps ≈ 900 epochs
+        curriculum=True,
+        curr_start_len=4,
+        curr_step_size=3,
+        curr_step_epochs=100,
+    ),
     "16QAM": dict(
-        epochs=12000, DFE_epoch=8000,
-        adaptive_dfe=True, dfe_min_epochs=2000, dfe_patience=10,
-        # Curriculum: start at length 4, grow by 3 every 150 epochs
-        # reaches full length 31 after ~9 steps ≈ 1350 epochs
-        curriculum=True, curr_start_len=4, curr_step_size=3, curr_step_epochs=150,
+        # Training schedule
+        epochs=20000,
+        DFE_epoch=10000,
+        # Adaptive DFE switching
+        adaptive_dfe=True,
+        dfe_min_epochs=2000,
+        dfe_patience=10,
+        dfe_min_delta=5e-4,
+        # DFE-phase early stopping
+        early_stop_patience=15,
+        early_stop_min_delta=1e-4,
+        # Curriculum: start=4, +2 every 250 epochs → full length ~14 steps ≈ 1750 epochs
+        curriculum=True,
+        curr_start_len=4,
+        curr_step_size=2,
+        curr_step_epochs=250,
     ),
     "64QAM": dict(
-        epochs=14000, DFE_epoch=10000,
-        adaptive_dfe=True, dfe_min_epochs=3000, dfe_patience=10,
-        # Curriculum: start at length 2, grow by 2 every 200 epochs
-        # reaches full length 31 after ~15 steps ≈ 3000 epochs (within dfe_min_epochs)
-        curriculum=True, curr_start_len=2, curr_step_size=2, curr_step_epochs=200,
+        # Training schedule
+        epochs=30000,
+        DFE_epoch=15000,
+        # Adaptive DFE switching
+        adaptive_dfe=True,
+        dfe_min_epochs=9000,
+        dfe_patience=10,
+        dfe_min_delta=5e-4,
+        # DFE-phase early stopping
+        early_stop_patience=15,
+        early_stop_min_delta=1e-4,
+        # Curriculum: start=2, +1 every 300 epochs → full length ~29 steps ≈ 8700 epochs
+        curriculum=True,
+        curr_start_len=2,
+        curr_step_size=1,
+        curr_step_epochs=300,
     ),
 }
 
@@ -77,7 +153,6 @@ TRAIN_OVERRIDES = {
 def make_args(cfg: dict, dfe_train: bool) -> SimpleNamespace:
     """Build a complete args namespace for one training run."""
     joint = build_joint_constellation(cfg["modulation"], cfg["num_ant"])
-    train_cfg = {**TRAIN_CFG, **TRAIN_OVERRIDES.get(cfg["modulation"], {})}
     return SimpleNamespace(
         num_ant=cfg["num_ant"],
         modulation=cfg["modulation"],
@@ -87,7 +162,8 @@ def make_args(cfg: dict, dfe_train: bool) -> SimpleNamespace:
         DFE_TRAIN=dfe_train,
         modu_num=joint.shape[0],   # will be overwritten inside trainNetwork
         **TRANSFORMER_CFG,
-        **train_cfg,
+        **SHARED_CFG,
+        **CONSTELLATION_CFG[cfg["modulation"]],
     )
 
 
