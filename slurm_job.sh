@@ -20,10 +20,10 @@
 #SBATCH --job-name=DEFINED_replicate
 #SBATCH --partition=gpu
 #SBATCH --gres=gpu:1
-#SBATCH --nodelist=jaguar05
+#SBATCH --nodelist=cheetah01,cheetah04,serval03,serval[06-09]
 #SBATCH --cpus-per-task=8
 #SBATCH --mem=64G
-#SBATCH --time=48:00:00
+#SBATCH --time=8:00:00
 #SBATCH --output=logs/defined_%j.out
 #SBATCH --error=logs/defined_%j.err
 #SBATCH --mail-type=END,FAIL
@@ -64,7 +64,7 @@ module load miniforge
 # ── Activate conda environment ────────────────────────────────────────────────
 # First-time setup — run this once interactively before submitting:
 #
-#   srun --partition=gpu --gres=gpu:1 --nodelist=nekomata01 \
+#   srun --partition=gpu --gres=gpu:1 --nodelist=cheetah01,cheetah04,serval03,serval[06-09] \
 #        --cpus-per-task=8 --mem=32G --time=1:00:00 --pty bash
 #   module load miniforge
 #   conda create -n defined python=3.10 -y
