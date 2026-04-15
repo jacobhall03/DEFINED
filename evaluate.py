@@ -33,7 +33,9 @@ from run_experiments import (
     SHARED_CFG,
     checkpoint_path,
 )
-from data import build_joint_constellation, MIMOSequenceDataset
+from data.modulation import build_joint_constellation
+from data.dataset import MIMOSequenceDataset
+from channels import build_channel
 from train import build_model, icl_val, DEFINED_val
 from baseline import calculate_ser, DFE_MMSE_SER
 
@@ -90,10 +92,12 @@ def get_eval_data(cfg: dict, n: int, device: torch.device):
     """Generate n test samples at the config's fixed eval SNR (seed=42)."""
     args  = make_eval_args(cfg)
     joint = build_joint_constellation(args.modulation, args.num_ant)
+    channel = build_channel(args)
     ds    = MIMOSequenceDataset(
         args=args, num_samples=n,
+        channel=channel,
         joint_constellation=joint,
-        channel_type="rayleigh", seed=42,
+        seed=42,
     )
     loader = DataLoader(ds, batch_size=n, shuffle=False, num_workers=0)
     batch  = next(iter(loader))

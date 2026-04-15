@@ -20,7 +20,7 @@ from types import SimpleNamespace
 # Disable WandB before any train/wandb imports (can override with --use_wandb)
 os.environ.setdefault("WANDB_MODE", "disabled")
 
-from data import build_joint_constellation                              # noqa: E402
+from data.modulation import build_joint_constellation                   # noqa: E402
 from train import build_model, trainNetwork, plot_training_history     # noqa: E402
 
 
@@ -45,6 +45,10 @@ SHARED_CFG = dict(
     batch_size=512,
     learning_rate=1e-4,
     loss_weight=0.7,   # α in Eq. (4): L = α·L_DF + (1-α)·L_ICL
+    # Channel type for the flat-fading paper replication experiments
+    channel_type="flat_fading",
+    fading_type="rayleigh",
+    K_factor=1.0,
 )
 
 # ── Per-constellation training configuration ──────────────────────────────────

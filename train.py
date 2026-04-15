@@ -13,11 +13,9 @@ import numpy as np
 import wandb
 
 from model import TransformerModel
-from data import (
-    count_modulation_symbols,
-    build_joint_constellation,
-    MIMOSequenceDataset,
-)
+from data.modulation import count_modulation_symbols, build_joint_constellation
+from data.dataset import MIMOSequenceDataset
+from channels import build_channel
 from config import parameter_reading
 
 
@@ -178,6 +176,12 @@ def trainNetwork(model_GPT2, args, task_name, device):
     loss_function_model_GPT2 = nn.CrossEntropyLoss(reduction="none")
     optimizer_model_GPT2 = optim.AdamW(model_GPT2.parameters(), lr=args.learning_rate)
 
+    # ---------------- Channel model ----------------------------------------
+    channel = build_channel(args)
+    # For OFDM, T = num_subcarriers; override prompt_seq_length so all
+    # downstream code (curriculum, n_positions, etc.) stays consistent.
+    args.prompt_seq_length = channel.seq_length
+
     # ---------------- Build joint constellation & datasets ----------------
     # For SISO (num_ant=1), joint_constellation size == args.modu_num
     joint_constellation = build_joint_constellation(args.modulation, args.num_ant)
@@ -189,9 +193,8 @@ def trainNetwork(model_GPT2, args, task_name, device):
     train_dataset = MIMOSequenceDataset(
         args=args,
         num_samples=n_train,
+        channel=channel,
         joint_constellation=joint_constellation,
-        channel_type="rayleigh",
-        K_factor=1.0,
         seed=0,
     )
     train_loader = DataLoader(
@@ -207,9 +210,8 @@ def trainNetwork(model_GPT2, args, task_name, device):
     val_dataset = MIMOSequenceDataset(
         args=args,
         num_samples=n_val,
+        channel=channel,
         joint_constellation=joint_constellation,
-        channel_type="rayleigh",
-        K_factor=1.0,
         seed=123,
     )
     val_loader = DataLoader(

@@ -1,17 +1,22 @@
 #!/bin/bash
 # =============================================================================
-# One-time environment setup for DEFINED paper replication.
+# One-time environment setup for DEFINED.
 #
-# Run this interactively on a GPU node before submitting slurm_job.sh:
+# Run this interactively on a GPU node before submitting any SLURM job:
 #
-#   srun --partition=gpu --gres=gpu:1 --nodelist=nekomata01 \
-#        --cpus-per-task=8 --mem=32G --time=1:00:00 --pty bash
-#   bash setup_env.sh
+#   srun --partition=gpu --gres=gpu:1 --cpus-per-task=8 --mem=32G \
+#        --time=1:00:00 --pty bash
+#   bash scripts/setup_env.sh
 # =============================================================================
 
 set -e   # exit immediately on any error
 
+# Move to project root regardless of where the script is called from
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "$SCRIPT_DIR/.."
+
 echo "===== DEFINED environment setup ============================="
+echo "  Working directory: $(pwd)"
 
 # ── Load modules ──────────────────────────────────────────────────────────────
 module purge
@@ -30,8 +35,8 @@ source "$(conda info --base)/etc/profile.d/conda.sh"
 conda activate defined
 
 # ── Install dependencies ──────────────────────────────────────────────────────
-# Detect GPU CUDA capability to decide between stable and nightly PyTorch.
-# RTX 5080 / Blackwell (sm_120) requires nightly; everything older uses stable.
+# Detect GPU compute capability to decide between stable and nightly PyTorch.
+# RTX 5080 / Blackwell (sm_120+) requires nightly; everything older uses stable.
 GPU_CAP=$(python - <<'PYEOF'
 try:
     import subprocess, re
@@ -71,4 +76,6 @@ print(f"numpy        : {numpy.__version__}")
 print(f"matplotlib   : {matplotlib.__version__}")
 PYEOF
 echo "============================================================="
-echo "  Setup complete. You can now run:  sbatch slurm_job.sh"
+echo "  Setup complete."
+echo "  Flat-fading experiments : sbatch scripts/slurm_flat_fading.sh"
+echo "  OFDM experiments        : sbatch scripts/slurm_ofdm.sh"

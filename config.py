@@ -50,6 +50,25 @@ def parameter_reading():
     parser.add_argument('--SNR_dB_max', type=float, default=20,
                         help='Maximum SNR value in dB.')
 
+    parser.add_argument('--channel_type', default='flat_fading',
+                        choices=['flat_fading', 'ofdm'],
+                        help="Channel model: 'flat_fading' (Rayleigh/Rician) or 'ofdm'.")
+    parser.add_argument('--fading_type', default='rayleigh',
+                        choices=['rayleigh', 'rician'],
+                        help="Fading type for flat_fading channel.")
+    parser.add_argument('--K_factor', type=float, default=1.0,
+                        help='Rician K-factor (used when fading_type=rician).')
+
+    # --------------------------------------------------------------- #
+    # OFDM-specific configuration
+    # --------------------------------------------------------------- #
+    parser.add_argument('--num_subcarriers', type=int, default=64,
+                        help='Number of OFDM sub-carriers (T for OFDM mode).')
+    parser.add_argument('--num_taps', type=int, default=8,
+                        help='Number of multipath CIR taps.')
+    parser.add_argument('--delay_spread', type=float, default=2.0,
+                        help='Exponential decay constant for tap power profile.')
+
     # --------------------------------------------------------------- #
     # Decision-Feedback training configuration
     # --------------------------------------------------------------- #

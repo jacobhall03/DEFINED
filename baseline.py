@@ -1,12 +1,9 @@
 from typing import Tuple
 import numpy as np
 
-from data import (
-    generate_signals,
-    generate_modulated_signal,
-    lmmse_channel_estimation,
-    predict_symbol,
-)
+from channels.flat_fading import generate_signals
+from data.modulation import generate_modulated_signal
+from data.encoding import lmmse_channel_estimation, predict_symbol
 
 
 def predict_lmmse_known_h(
@@ -52,7 +49,7 @@ def DFE_MMSE_SER(
     args.SNR_dB_min = snr_db
     args.SNR_dB_max = snr_db
 
-    # Generate complex-domain data using the current data API
+    # Generate complex-domain data using the flat-fading batch generator
     X, Y, Hs = generate_signals(
         batch_size=num_samples,
         args=args,
@@ -84,7 +81,6 @@ def DFE_MMSE_SER(
 
             # DFE detection at time t
             x_pred = predict_symbol(h_est, y_t, constellation)
-            # or equivalently: predict_lmmse_known_h(h_est, y_t, snr_db, constellation)
 
             # Append predicted symbol to the "pilot" set (decision feedback)
             x_pilot = np.vstack((x_pilot, x_pred))
@@ -100,7 +96,6 @@ def DFE_MMSE_SER(
     return ser
 
 
-
 def calculate_ser(
     args,
     num_samples: int,
@@ -109,7 +104,6 @@ def calculate_ser(
     channel_type: str = "rayleigh",
     K_factor: float = 1.0,
 ):
-
     # Ensure the sequence is long enough
     if args.prompt_seq_length < pilot_len + 1:
         args.prompt_seq_length = pilot_len + 1
@@ -127,7 +121,6 @@ def calculate_ser(
         channel_type=channel_type,
         K_factor=K_factor,
     )
-    # X, Y: (num_samples, T, num_ant), complex
 
     # Single-antenna constellation
     _, constellation = generate_modulated_signal(args, args.modulation)
@@ -140,7 +133,6 @@ def calculate_ser(
         x_pilot = X[i, :pilot_len, :]   # (pilot_len, num_ant)
         y_pilot = Y[i, :pilot_len, :]   # (pilot_len, num_ant)
 
-        h_true = Hs[i]  # (num_ant, num_ant), not directly used in detection here
         h_est = lmmse_channel_estimation(x_pilot, y_pilot, snr_db)
 
         # Detect the (pilot_len)-th symbol
