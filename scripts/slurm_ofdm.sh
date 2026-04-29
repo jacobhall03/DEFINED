@@ -2,8 +2,8 @@
 # =============================================================================
 # SLURM job script — OFDM frequency-selective channel experiments
 #
-# Trains DEFINED and ICL-only models for each OFDM config and produces
-# SER vs SNR figures per config.
+# Trains DEFINED and ICL-only models for OFDM configs and produces
+# SER-vs-SNR and SER-vs-context figures per config.
 #
 # ── Submission options ────────────────────────────────────────────────────────
 #
@@ -14,8 +14,14 @@
 #   TRAIN_JID=$(sbatch --parsable --array=0-4 scripts/slurm_ofdm.sh --array)
 #   sbatch --dependency=afterok:$TRAIN_JID scripts/slurm_ofdm.sh --eval-only
 #
+# BPSK/QPSK array only:
+#   sbatch --array=0-1 scripts/slurm_ofdm.sh --array
+#
 # Option C — evaluate previously trained checkpoints only:
 #   sbatch scripts/slurm_ofdm.sh --eval-only
+#
+# Option D — BPSK and QPSK SISO only:
+#   sbatch scripts/slurm_ofdm.sh --bpsk-qpsk
 #
 # =============================================================================
 
@@ -23,9 +29,8 @@
 #SBATCH --job-name=DEFINED_ofdm
 #SBATCH --partition=gpu
 #SBATCH --gres=gpu:1
-#SBATCH --nodelist=cheetah01,cheetah04,serval03,serval[06-09]
-#SBATCH --cpus-per-task=8
-#SBATCH --mem=64G
+#SBATCH --cpus-per-task=4
+#SBATCH --mem=32G
 #SBATCH --time=8:00:00
 #SBATCH --output=logs/ofdm_%j.out
 #SBATCH --error=logs/ofdm_%j.err
@@ -40,14 +45,17 @@ cd "$SCRIPT_DIR/.."
 # --array        : act as a job-array element (uses $SLURM_ARRAY_TASK_ID)
 # --eval-only    : skip training, run evaluation only
 # --config_idx N : train and/or evaluate only config index N (0-4)
+# --bpsk-qpsk    : train and/or evaluate SISO BPSK (0) and SISO QPSK (1)
 RUN_ARRAY=false
 EVAL_ONLY=false
 CONFIG_IDX=-1
+BPSK_QPSK=false
 while [[ $# -gt 0 ]]; do
     case $1 in
         --array)       RUN_ARRAY=true;  shift ;;
         --eval-only)   EVAL_ONLY=true;  shift ;;
         --config_idx)  CONFIG_IDX="$2"; shift 2 ;;
+        --bpsk-qpsk)   BPSK_QPSK=true;  shift ;;
         *)             shift ;;
     esac
 done
@@ -102,15 +110,19 @@ PYEOF
 echo "============================================================="
 
 # =============================================================================
-# Training
+# Training + evaluation
 # =============================================================================
 if [ "$EVAL_ONLY" = false ]; then
     echo ""
-    echo "===== OFDM Training started : $(date) ====================="
+    echo "===== OFDM Training/evaluation started : $(date) =========="
 
     if [ "$RUN_ARRAY" = true ]; then
         echo "  Array element $SLURM_ARRAY_TASK_ID"
         python run_experiments_ofdm.py --config_idx "$SLURM_ARRAY_TASK_ID"
+    elif [ "$BPSK_QPSK" = true ]; then
+        echo "  Running SISO BPSK and SISO QPSK configs only"
+        python run_experiments_ofdm.py --config_idx 0
+        python run_experiments_ofdm.py --config_idx 1
     elif [ "$CONFIG_IDX" -ge 0 ] 2>/dev/null; then
         echo "  Training config index $CONFIG_IDX only"
         python run_experiments_ofdm.py --config_idx "$CONFIG_IDX"
@@ -119,16 +131,19 @@ if [ "$EVAL_ONLY" = false ]; then
     fi
 
     echo ""
-    echo "===== OFDM Training complete : $(date) ==================="
+    echo "===== OFDM Training/evaluation complete : $(date) ========"
 fi
 
 # =============================================================================
 # Evaluation
 # =============================================================================
-if [ "$EVAL_ONLY" = true ] || [ "$RUN_ARRAY" = false ]; then
+if [ "$EVAL_ONLY" = true ]; then
     echo ""
     echo "===== OFDM Evaluation started : $(date) ==================="
-    if [ "$CONFIG_IDX" -ge 0 ] 2>/dev/null; then
+    if [ "$BPSK_QPSK" = true ]; then
+        python run_experiments_ofdm.py --eval_only --config_idx 0
+        python run_experiments_ofdm.py --eval_only --config_idx 1
+    elif [ "$CONFIG_IDX" -ge 0 ] 2>/dev/null; then
         python run_experiments_ofdm.py --eval_only --config_idx "$CONFIG_IDX"
     else
         python run_experiments_ofdm.py --eval_only
@@ -137,7 +152,7 @@ if [ "$EVAL_ONLY" = true ] || [ "$RUN_ARRAY" = false ]; then
     echo "===== OFDM Evaluation complete : $(date) =================="
     echo ""
     echo "  Figures saved to figures/:"
-    ls -lh figures/ofdm_ser_*.* 2>/dev/null || echo "  (no ofdm figures yet)"
+    ls -lh figures/ofdm_*.* 2>/dev/null || echo "  (no ofdm figures yet)"
 fi
 
 echo ""

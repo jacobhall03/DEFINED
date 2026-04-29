@@ -33,7 +33,17 @@ def build_model(embedding_dim, n_positions, num_heads, num_layers, num_classes):
 
 
 
-def icl_train(model, ys_batch, xs_batch, optimizer, loss_func, args):
+def _masked_mean(values, data_mask=None):
+    if data_mask is None:
+        return values.mean()
+    mask = data_mask.to(device=values.device, dtype=values.dtype)
+    if mask.dim() == 1:
+        mask = mask.unsqueeze(0).expand_as(values)
+    return (values * mask).sum() / mask.sum().clamp_min(1.0)
+
+
+def icl_train(model, ys_batch, xs_batch, optimizer, loss_func, args,
+              subcarrier_indices=None, data_mask=None):
     """One-step ICL training.
 
     ys_batch: (B, T, dim_y) = real-valued received features [Re(y), Im(y)]
@@ -42,7 +52,9 @@ def icl_train(model, ys_batch, xs_batch, optimizer, loss_func, args):
     model.train()
 
     # Forward pass through the model
-    logits = model(ys_batch, xs_batch)               # (B, T, C)
+    logits = model(
+        ys_batch, xs_batch, subcarrier_indices=subcarrier_indices
+    )                                                # (B, T, C)
 
     # Targets: class indices from one-hot x
     xs_indices = torch.argmax(xs_batch, dim=-1)      # (B, T)
@@ -50,7 +62,7 @@ def icl_train(model, ys_batch, xs_batch, optimizer, loss_func, args):
     # Cross-entropy over classes at each time step
     # loss_func is CrossEntropyLoss(reduction="none") -> (B, T)
     loss_per_token = loss_func(logits.transpose(1, 2), xs_indices)
-    loss_mean = loss_per_token.mean()
+    loss_mean = _masked_mean(loss_per_token, data_mask)
 
     optimizer.zero_grad()
     loss_mean.backward()
@@ -60,7 +72,8 @@ def icl_train(model, ys_batch, xs_batch, optimizer, loss_func, args):
 
 
 def DEFINED_train(args, model, ys_batch, xs_batch,
-                  optimizer, loss_func, train_pilot_len):
+                  optimizer, loss_func, train_pilot_len,
+                  subcarrier_indices=None, data_mask=None):
     """Decision Feedback training (DFE), equivalent to original sequence_train_step.
 
     ys_batch: (B, T, dim_y) = received features
@@ -77,12 +90,14 @@ def DEFINED_train(args, model, ys_batch, xs_batch,
     with torch.no_grad():
         for i in range(length):
             if i < pilot_len:
-                # For pilot positions, we feed the true x
-                xin = torch.cat([xin[:, :i, :], xs_batch[:, i:, :]], dim=1)
+                # For pilot positions, feed only the known pilot symbol.
+                xin[:, i, :] = xs_batch[:, i, :]
             else:
                 # Run the model with current feedback sequence xin
                 # Note: original code uses full ys_batch here (not truncated yin)
-                x_hat = model(ys_batch, xin)                    # (B, T, C)
+                x_hat = model(
+                    ys_batch, xin, subcarrier_indices=subcarrier_indices
+                )                                               # (B, T, C)
                 probabilities = torch.softmax(x_hat, dim=-1)
                 _, max_indices = torch.max(probabilities, dim=-1)  # (B, T)
 
@@ -90,21 +105,25 @@ def DEFINED_train(args, model, ys_batch, xs_batch,
                     max_indices, num_classes=args.modu_num
                 ).float()                                       # (B, T, C)
 
-                # Replace from position i onward with predicted symbols
-                xin = torch.cat([xin[:, :i, :], one_hot_encoded[:, i:, :]], dim=1)
+                # Add the current decision as feedback for later data bins.
+                xin[:, i, :] = one_hot_encoded[:, i, :]
 
     # 1) Loss when using decision-feedback sequence xin
-    x_prob1 = model(ys_batch, xin)                  # (B, T, C)
+    x_prob1 = model(
+        ys_batch, xin, subcarrier_indices=subcarrier_indices
+    )                                               # (B, T, C)
     xs_real_indices = torch.argmax(xs_batch, dim=-1)   # (B, T)
     loss1 = loss_func(x_prob1.transpose(1, 2), xs_real_indices)  # (B, T)
 
     # 2) Loss when using full teacher forcing xs_batch (pure ICL)
-    x_prob2 = model(ys_batch, xs_batch)             # (B, T, C)
+    x_prob2 = model(
+        ys_batch, xs_batch, subcarrier_indices=subcarrier_indices
+    )                                               # (B, T, C)
     loss2 = loss_func(x_prob2.transpose(1, 2), xs_real_indices)  # (B, T)
 
     # Weighted combination (same as original)
     weight = args.loss_weight
-    total_loss = (weight * loss1 + (1.0 - weight) * loss2).mean()
+    total_loss = _masked_mean(weight * loss1 + (1.0 - weight) * loss2, data_mask)
 
     optimizer.zero_grad()
     total_loss.backward()
@@ -114,24 +133,33 @@ def DEFINED_train(args, model, ys_batch, xs_batch,
 
 
 
-def icl_val(model, ys_batch, xs_batch, args):
+def icl_val(model, ys_batch, xs_batch, args, subcarrier_indices=None, data_mask=None):
     """Evaluate symbol error rate using pure ICL (no decision feedback)."""
     model.eval()
     with torch.no_grad():
-        logits = model(ys_batch, xs_batch)         # (B, T, C)
+        logits = model(
+            ys_batch, xs_batch, subcarrier_indices=subcarrier_indices
+        )                                          # (B, T, C)
         pred_indices = torch.argmax(logits, dim=-1)    # (B, T)
         true_indices = torch.argmax(xs_batch, dim=-1)  # (B, T)
 
         errors = (pred_indices != true_indices)        # (B, T)
         length_errors = errors.float().mean(dim=0)     # (T,)
-        mean_errors = length_errors.mean().item()
+        if data_mask is not None:
+            mask = data_mask.to(device=errors.device, dtype=torch.bool)
+            if mask.dim() == 2:
+                mask = mask[0]
+            mean_errors = length_errors[mask].mean().item()
+        else:
+            mean_errors = length_errors.mean().item()
         length_errors_list = length_errors.cpu().numpy().tolist()
 
     return length_errors_list, mean_errors
 
 
 
-def DEFINED_val(model, ys_batch, xs_batch, args, train_pilot_len):
+def DEFINED_val(model, ys_batch, xs_batch, args, train_pilot_len,
+                subcarrier_indices=None, data_mask=None):
     """Evaluate sequence error rate with decision feedback (DFE)."""
     model.eval()
     with torch.no_grad():
@@ -146,7 +174,9 @@ def DEFINED_val(model, ys_batch, xs_batch, args, train_pilot_len):
             if i < pilot_len:
                 xin[:, i, :] = xs_batch[:, i, :]
             else:
-                x_hat = model(yin, xin)                    # (B, T, C)
+                x_hat = model(
+                    yin, xin, subcarrier_indices=subcarrier_indices
+                )                                          # (B, T, C)
                 probabilities = torch.softmax(x_hat, dim=-1)
                 _, max_indices = torch.max(probabilities, dim=-1)
                 one_hot_encoded = torch.nn.functional.one_hot(
@@ -158,7 +188,13 @@ def DEFINED_val(model, ys_batch, xs_batch, args, train_pilot_len):
         errors = (xs_batch != xin).any(dim=2)       # (B, T)
         length_errors = errors.float().mean(dim=0)  # (T,)
         mean_errors = length_errors.mean().item()
-        remaining_mean_errors = length_errors[train_pilot_len:].mean().item()
+        if data_mask is not None:
+            mask = data_mask.to(device=errors.device, dtype=torch.bool)
+            if mask.dim() == 2:
+                mask = mask[0]
+            remaining_mean_errors = length_errors[mask].mean().item()
+        else:
+            remaining_mean_errors = length_errors[train_pilot_len:].mean().item()
         length_errors_list = length_errors.cpu().numpy().tolist()
 
     return length_errors_list, remaining_mean_errors
@@ -181,6 +217,14 @@ def trainNetwork(model_GPT2, args, task_name, device):
     # For OFDM, T = num_subcarriers; override prompt_seq_length so all
     # downstream code (curriculum, n_positions, etc.) stays consistent.
     args.prompt_seq_length = channel.seq_length
+    if getattr(args, "channel_type", None) == "ofdm":
+        if not hasattr(args, "pilot_indices"):
+            spacing = getattr(args, "pilot_spacing", None)
+            if spacing is not None:
+                args.pilot_indices = list(range(0, channel.seq_length, int(spacing)))
+            else:
+                args.pilot_indices = list(range(int(args.train_pilot_len)))
+        args.train_pilot_len = len(args.pilot_indices)
 
     # ---------------- Build joint constellation & datasets ----------------
     # For SISO (num_ant=1), joint_constellation size == args.modu_num
@@ -225,6 +269,12 @@ def trainNetwork(model_GPT2, args, task_name, device):
     val_batch = next(iter(val_loader))
     y_val = val_batch["y"].to(device)  # (B_val, T, 2N)
     x_val = val_batch["x"].to(device)  # (B_val, T, C)
+    subcarrier_val = val_batch.get("subcarrier_indices")
+    data_mask_val = val_batch.get("data_mask")
+    if subcarrier_val is not None:
+        subcarrier_val = subcarrier_val.to(device)
+    if data_mask_val is not None:
+        data_mask_val = data_mask_val.to(device)
 
     # ---------------- Training config ----------------
     n_it_per_epoch = 10
@@ -341,6 +391,12 @@ def trainNetwork(model_GPT2, args, task_name, device):
 
             ys_batch = batch["y"].to(device)[:, :curr_seq_len, :]  # (B, L, 2N)
             xs_batch = batch["x"].to(device)[:, :curr_seq_len, :]  # (B, L, C)
+            subcarrier_indices = batch.get("subcarrier_indices")
+            data_mask = batch.get("data_mask")
+            if subcarrier_indices is not None:
+                subcarrier_indices = subcarrier_indices.to(device)[:, :curr_seq_len]
+            if data_mask is not None:
+                data_mask = data_mask.to(device)[:, :curr_seq_len]
 
             if in_icl_phase or not args.DFE_TRAIN:
                 loss, output = icl_train(
@@ -350,6 +406,8 @@ def trainNetwork(model_GPT2, args, task_name, device):
                     optimizer=optimizer_model_GPT2,
                     loss_func=loss_function_model_GPT2,
                     args=args,
+                    subcarrier_indices=subcarrier_indices,
+                    data_mask=data_mask,
                 )
             else:
                 loss, output = DEFINED_train(
@@ -360,6 +418,8 @@ def trainNetwork(model_GPT2, args, task_name, device):
                     optimizer=optimizer_model_GPT2,
                     loss_func=loss_function_model_GPT2,
                     train_pilot_len=args.train_pilot_len,
+                    subcarrier_indices=subcarrier_indices,
+                    data_mask=data_mask,
                 )
 
             running_loss += loss / n_it_per_epoch
@@ -381,6 +441,14 @@ def trainNetwork(model_GPT2, args, task_name, device):
                     ys_batch=y_val[:, :curr_seq_len, :],
                     xs_batch=x_val[:, :curr_seq_len, :],
                     args=args,
+                    subcarrier_indices=(
+                        subcarrier_val[:, :curr_seq_len]
+                        if subcarrier_val is not None else None
+                    ),
+                    data_mask=(
+                        data_mask_val[:, :curr_seq_len]
+                        if data_mask_val is not None else None
+                    ),
                 )
             else:
                 _, mean_errors = DEFINED_val(
@@ -389,6 +457,8 @@ def trainNetwork(model_GPT2, args, task_name, device):
                     xs_batch=x_val,
                     args=args,
                     train_pilot_len=args.train_pilot_len,
+                    subcarrier_indices=subcarrier_val,
+                    data_mask=data_mask_val,
                 )
 
             history["val_ser"].append((epoch, mean_errors))
@@ -521,7 +591,7 @@ def plot_training_history(history: dict, task_name: str, save_dir: str = "./figu
             color, ls = "royalblue", "--"
             label     = f"len→{val}"
         elif kind == "dfe":
-            color, ls = "crimson", "-"
+            color, ls = "crimson", ":"
             label     = "ICL→DFE"
         else:  # early_stop
             color, ls = "darkorange", "-"

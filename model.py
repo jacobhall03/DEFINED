@@ -20,7 +20,9 @@ class TransformerModel(nn.Module):
         )
         self.name = f"gpt2_embd={n_embd}_layer={n_layer}_head={n_head}"
         self.n_classes = n_classes
+        self.max_subcarriers = max(1, n_positions // 2)
         self._read_in = nn.Linear(self.n_classes, n_embd)
+        self._subcarrier_embed = nn.Embedding(self.max_subcarriers, n_embd)
         self._backbone = GPT2Model(configuration)
         self._read_out = nn.Linear(n_embd, self.n_classes)
 
@@ -37,16 +39,24 @@ class TransformerModel(nn.Module):
         zs = zs.view(bsize, 2 * points, dim)
         return zs
 
-    def forward(self, ys_batch, xs_batch, inds=None):
-        if inds is None:
-            inds = torch.arange(xs_batch.shape[1])
-        else:
+    def forward(self, ys_batch, xs_batch, inds=None, subcarrier_indices=None):
+        if inds is not None:
             inds = torch.tensor(inds)
             if max(inds) >= xs_batch.shape[1] or min(inds) < 0:
                 raise ValueError("inds contain indices where xs and ys are not defined")
         zs = self._combine(ys_batch, xs_batch)
         zs = zs.to(torch.float32)
         embeds = self._read_in(zs)
+
+        if subcarrier_indices is not None:
+            if subcarrier_indices.dim() == 1:
+                subcarrier_indices = subcarrier_indices.unsqueeze(0).expand(xs_batch.shape[0], -1)
+            subcarrier_indices = subcarrier_indices.to(device=xs_batch.device, dtype=torch.long)
+            if subcarrier_indices.max() >= self.max_subcarriers or subcarrier_indices.min() < 0:
+                raise ValueError("subcarrier_indices exceed the model's configured range")
+            pair_indices = torch.repeat_interleave(subcarrier_indices, repeats=2, dim=1)
+            embeds = embeds + self._subcarrier_embed(pair_indices)
+
         output = self._backbone(inputs_embeds=embeds).last_hidden_state
         prediction = self._read_out(output)
         bsize, points, dim = ys_batch.shape

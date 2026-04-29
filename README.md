@@ -71,6 +71,15 @@ sequence position corresponds to one sub-carrier (T = K).
 | `--num_subcarriers` | `64` | Number of OFDM sub-carriers (= T) |
 | `--num_taps` | `8` | Number of CIR multipath taps |
 | `--delay_spread` | `2.0` | Exponential decay constant for tap powers |
+| `--pilot_spacing` | `8` | Comb pilot spacing used by the OFDM runner |
+
+The OFDM runner uses explicit comb pilot bins.  For the default `K=64` and
+`pilot_spacing=8`, pilot bins are `{0, 8, 16, 24, 32, 40, 48, 56}`.  Dataset
+samples are reordered as `[pilot bins..., data bins...]`, while each token also
+carries its original sub-carrier index through a learned embedding.  Training
+and evaluation SER are computed only over data sub-carriers.  To use a custom
+pattern, add `pilot_indices=(...)` to `OFDM_CHANNEL_CFG` in
+`run_experiments_ofdm.py`.
 
 ---
 

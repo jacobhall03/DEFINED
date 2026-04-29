@@ -68,6 +68,8 @@ def parameter_reading():
                         help='Number of multipath CIR taps.')
     parser.add_argument('--delay_spread', type=float, default=2.0,
                         help='Exponential decay constant for tap power profile.')
+    parser.add_argument('--pilot_spacing', type=int, default=8,
+                        help='OFDM comb pilot spacing. Pilot bins are 0, spacing, ...')
 
     # --------------------------------------------------------------- #
     # Decision-Feedback training configuration
