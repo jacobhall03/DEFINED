@@ -29,6 +29,7 @@
 #SBATCH --job-name=DEFINED_ofdm
 #SBATCH --partition=gpu
 #SBATCH --gres=gpu:1
+#SBATCH --exclude=nekomata01
 #SBATCH --cpus-per-task=4
 #SBATCH --mem=32G
 #SBATCH --time=8:00:00
@@ -37,9 +38,21 @@
 #SBATCH --mail-type=END,FAIL
 #SBATCH --mail-user=weh7xp@virginia.edu   # ← update this
 
+set -euo pipefail
+
 # ── Move to project root ──────────────────────────────────────────────────────
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-cd "$SCRIPT_DIR/.."
+if [ -n "${SLURM_SUBMIT_DIR:-}" ] && [ -f "$SLURM_SUBMIT_DIR/run_experiments_ofdm.py" ]; then
+    cd "$SLURM_SUBMIT_DIR"
+else
+    SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    cd "$SCRIPT_DIR/.."
+fi
+
+if [ ! -f "run_experiments_ofdm.py" ]; then
+    echo "ERROR: Could not locate project root containing run_experiments_ofdm.py" >&2
+    echo "       Submit from the repo root, e.g. cd ~/MLComms/DEFINED first." >&2
+    exit 1
+fi
 
 # ── Parse optional script-level flags ────────────────────────────────────────
 # --array        : act as a job-array element (uses $SLURM_ARRAY_TASK_ID)
@@ -75,6 +88,7 @@ echo "============================================================="
 
 module purge
 module load miniforge
+source "$(conda info --base)/etc/profile.d/conda.sh"
 
 if ! conda env list | grep -q "^defined "; then
     echo "===== Creating conda environment (first run only) ==========="
@@ -105,6 +119,16 @@ print(f"PyTorch     : {torch.__version__}")
 print(f"CUDA avail  : {torch.cuda.is_available()}")
 if torch.cuda.is_available():
     print(f"GPU         : {torch.cuda.get_device_name(0)}")
+    cap = torch.cuda.get_device_capability(0)
+    sm = f"sm_{cap[0]}{cap[1]}"
+    arch_list = torch.cuda.get_arch_list()
+    print(f"Compute cap : {sm}")
+    print(f"Torch archs : {arch_list}")
+    if sm not in arch_list:
+        raise SystemExit(
+            f"ERROR: This PyTorch build does not support {sm}. "
+            "Use a non-Blackwell GPU node or reinstall PyTorch nightly for RTX 50-series."
+        )
 print(f"transformers: {transformers.__version__}")
 PYEOF
 echo "============================================================="
