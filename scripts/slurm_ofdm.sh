@@ -29,7 +29,12 @@
 #SBATCH --job-name=DEFINED_ofdm
 #SBATCH --partition=gpu
 #SBATCH --gres=gpu:1
-#SBATCH --exclude=nekomata01
+# Current defined env reports CUDA arch support through sm_90, but not Ada sm_89
+# or Blackwell sm_120. Exclude those nodes unless the env is rebuilt for them.
+# UVA CS gpu partition reference:
+#   cheetah02  = RTX 4000 Ada Generation (sm_89)
+#   nekomata01 = RTX 5080 (sm_120)
+#SBATCH --exclude=cheetah02,nekomata01
 #SBATCH --cpus-per-task=4
 #SBATCH --mem=32G
 #SBATCH --time=8:00:00
