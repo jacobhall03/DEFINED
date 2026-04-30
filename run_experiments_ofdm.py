@@ -55,9 +55,11 @@ OFDM_CHANNEL_CFG = dict(
 
 # Shared training parameters
 SHARED_CFG = dict(
-    batch_size=512,
+    batch_size=128,
     learning_rate=1e-4,
     loss_weight=0.7,
+    train_batches_per_epoch=10,
+    validation_samples=512,
     # prompt_seq_length is overridden by channel.seq_length = num_subcarriers
     prompt_seq_length=64,
 )
@@ -255,7 +257,7 @@ def train_one(cfg: dict, dfe_train: bool, device: torch.device):
 # ---------------------------------------------------------------------------
 
 N_EVAL = 20_000
-MINI_BATCH = 2_048
+MINI_BATCH = 512
 SNR_SWEEP = list(range(0, 31, 5))  # 0, 5, 10, 15, 20, 25, 30 dB
 
 

@@ -64,7 +64,7 @@ def icl_train(model, ys_batch, xs_batch, optimizer, loss_func, args,
     loss_per_token = loss_func(logits.transpose(1, 2), xs_indices)
     loss_mean = _masked_mean(loss_per_token, data_mask)
 
-    optimizer.zero_grad()
+    optimizer.zero_grad(set_to_none=True)
     loss_mean.backward()
     optimizer.step()
 
@@ -79,7 +79,6 @@ def DEFINED_train(args, model, ys_batch, xs_batch,
     ys_batch: (B, T, dim_y) = received features
     xs_batch: (B, T, C)     = one-hot ground truth transmit symbols
     """
-    torch.autograd.set_detect_anomaly(True)
     model.train()
 
     bsize, length, dim = xs_batch.shape
@@ -108,28 +107,32 @@ def DEFINED_train(args, model, ys_batch, xs_batch,
                 # Add the current decision as feedback for later data bins.
                 xin[:, i, :] = one_hot_encoded[:, i, :]
 
+    optimizer.zero_grad(set_to_none=True)
+
     # 1) Loss when using decision-feedback sequence xin
     x_prob1 = model(
         ys_batch, xin, subcarrier_indices=subcarrier_indices
     )                                               # (B, T, C)
     xs_real_indices = torch.argmax(xs_batch, dim=-1)   # (B, T)
     loss1 = loss_func(x_prob1.transpose(1, 2), xs_real_indices)  # (B, T)
+    loss1_mean = _masked_mean(loss1, data_mask)
+    (args.loss_weight * loss1_mean).backward()
+    loss1_value = loss1_mean.detach().item()
+    output = x_prob1.detach()
+    del x_prob1, loss1, loss1_mean
 
     # 2) Loss when using full teacher forcing xs_batch (pure ICL)
     x_prob2 = model(
         ys_batch, xs_batch, subcarrier_indices=subcarrier_indices
     )                                               # (B, T, C)
     loss2 = loss_func(x_prob2.transpose(1, 2), xs_real_indices)  # (B, T)
-
-    # Weighted combination (same as original)
-    weight = args.loss_weight
-    total_loss = _masked_mean(weight * loss1 + (1.0 - weight) * loss2, data_mask)
-
-    optimizer.zero_grad()
-    total_loss.backward()
+    loss2_mean = _masked_mean(loss2, data_mask)
+    ((1.0 - args.loss_weight) * loss2_mean).backward()
+    loss2_value = loss2_mean.detach().item()
     optimizer.step()
 
-    return total_loss.detach().item(), x_prob1.detach()
+    total_loss_value = args.loss_weight * loss1_value + (1.0 - args.loss_weight) * loss2_value
+    return total_loss_value, output
 
 
 
@@ -232,7 +235,11 @@ def trainNetwork(model_GPT2, args, task_name, device):
     num_classes = joint_constellation.shape[0]
     args.modu_num = num_classes  # ensure consistency with joint constellation size
 
-    n_train = int(1e3)
+    # ---------------- Training config ----------------
+    n_it_per_epoch = getattr(args, "train_batches_per_epoch", 10)
+    log_every = getattr(args, "log_every", 10)
+
+    n_train = max(int(getattr(args, "train_samples", 0)), args.batch_size * n_it_per_epoch)
     # Train dataset: large "infinite" style dataset
     train_dataset = MIMOSequenceDataset(
         args=args,
@@ -250,7 +257,7 @@ def trainNetwork(model_GPT2, args, task_name, device):
     )
 
     # Validation dataset: fixed samples for stable evaluation
-    n_val = int(2e3)
+    n_val = int(getattr(args, "validation_samples", 2e3))
     val_dataset = MIMOSequenceDataset(
         args=args,
         num_samples=n_val,
@@ -275,10 +282,6 @@ def trainNetwork(model_GPT2, args, task_name, device):
         subcarrier_val = subcarrier_val.to(device)
     if data_mask_val is not None:
         data_mask_val = data_mask_val.to(device)
-
-    # ---------------- Training config ----------------
-    n_it_per_epoch = 10
-    log_every = 10
 
     resume_path = os.path.join("./models", f"{task_name}_resume.pth")
     os.makedirs("./models", exist_ok=True)

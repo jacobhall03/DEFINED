@@ -39,6 +39,7 @@
 #SBATCH --mail-user=weh7xp@virginia.edu   # ← update this
 
 set -euo pipefail
+export PYTORCH_CUDA_ALLOC_CONF="${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:True}"
 
 # ── Move to project root ──────────────────────────────────────────────────────
 if [ -n "${SLURM_SUBMIT_DIR:-}" ] && [ -f "$SLURM_SUBMIT_DIR/run_experiments_ofdm.py" ]; then
